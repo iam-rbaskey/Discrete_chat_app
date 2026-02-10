@@ -14,8 +14,8 @@ export async function POST(req: Request) {
     try {
         const { chatId, senderId, content } = await req.json();
 
-        if (!chatId || !senderId || !content) {
-            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+        if (!chatId || !senderId || !content || !mongoose.Types.ObjectId.isValid(chatId) || !mongoose.Types.ObjectId.isValid(senderId)) {
+            return NextResponse.json({ error: 'Missing or invalid fields' }, { status: 400 });
         }
 
         await connectToDatabase();
@@ -46,8 +46,8 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url);
         const chatId = searchParams.get('chatId');
 
-        if (!chatId) {
-            return NextResponse.json({ error: 'Missing chat ID' }, { status: 400 });
+        if (!chatId || !mongoose.Types.ObjectId.isValid(chatId)) {
+            return NextResponse.json({ error: 'Missing or invalid chat ID' }, { status: 400 });
         }
 
         await connectToDatabase();

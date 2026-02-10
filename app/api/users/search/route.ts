@@ -1,7 +1,7 @@
-
 import { NextResponse } from 'next/server';
 import connectToDatabase from '@/app/lib/db';
 import User from '@/app/lib/models/User';
+import mongoose from 'mongoose';
 
 export async function GET(req: Request) {
     try {
@@ -15,18 +15,23 @@ export async function GET(req: Request) {
 
         await connectToDatabase();
 
+        const searchConditions: any[] = [
+            {
+                $or: [
+                    { uniqueId: { $regex: new RegExp(`^${query}$`, 'i') } }, // Exact match for ID (case-insensitive)
+                    { name: { $regex: new RegExp(query, 'i') } } // Partial match for name
+                ]
+            }
+        ];
+
+        // Only exclude current user if ID is valid and not "undefined" string
+        if (currentUserId && currentUserId !== 'undefined' && mongoose.Types.ObjectId.isValid(currentUserId)) {
+            searchConditions.push({ _id: { $ne: currentUserId } });
+        }
+
         // Search for user by uniqueId (exact match preferred) or name (partial match)
-        // Excluding the current user from results
         const users = await User.find({
-            $and: [
-                { _id: { $ne: currentUserId } }, // Exclude current user
-                {
-                    $or: [
-                        { uniqueId: { $regex: new RegExp(`^${query}$`, 'i') } }, // Exact match for ID (case-insensitive)
-                        { name: { $regex: new RegExp(query, 'i') } } // Partial match for name
-                    ]
-                }
-            ]
+            $and: searchConditions
         }).select('name uniqueId avatar status gender country');
 
         return NextResponse.json({ users });

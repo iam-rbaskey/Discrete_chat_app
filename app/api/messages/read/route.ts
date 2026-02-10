@@ -4,13 +4,15 @@ import connectToDatabase from '@/app/lib/db';
 import Message from '@/app/lib/models/Message';
 import Chat from '@/app/lib/models/Chat';
 
+import mongoose from 'mongoose';
+
 // Mark messages as read for a chat
 export async function PUT(req: Request) {
     try {
         const { chatId, userId } = await req.json();
 
-        if (!chatId || !userId) {
-            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+        if (!chatId || !userId || !mongoose.Types.ObjectId.isValid(chatId) || !mongoose.Types.ObjectId.isValid(userId)) {
+            return NextResponse.json({ error: 'Invalid or missing IDs' }, { status: 400 });
         }
 
         await connectToDatabase();

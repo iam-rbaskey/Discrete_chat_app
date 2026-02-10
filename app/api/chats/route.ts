@@ -20,8 +20,8 @@ export async function POST(req: Request) {
     try {
         const { currentUserId, targetUserId } = await req.json();
 
-        if (!currentUserId || !targetUserId) {
-            return NextResponse.json({ error: 'Missing user IDs' }, { status: 400 });
+        if (!currentUserId || !targetUserId || !mongoose.Types.ObjectId.isValid(currentUserId) || !mongoose.Types.ObjectId.isValid(targetUserId)) {
+            return NextResponse.json({ error: 'Missing or invalid user IDs' }, { status: 400 });
         }
 
         await connectToDatabase();
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
         // Check if chat already exists
         const existingChat = await Chat.findOne({
             participants: { $all: [currentUserId, targetUserId] }
-        }).populate('participants', 'name avatar uniqueId status gender country');
+        }).populate('participants', 'name avatar uniqueId status gender country publicKey');
 
         if (existingChat) {
             return NextResponse.json({ chat: existingChat, isNew: false });
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
 
         // Populate participants for frontend
         const populatedChat = await Chat.findById(newChat._id)
-            .populate('participants', 'name avatar uniqueId status gender country');
+            .populate('participants', 'name avatar uniqueId status gender country publicKey');
 
         return NextResponse.json({ chat: populatedChat, isNew: true });
     } catch (error: any) {
@@ -60,8 +60,10 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url);
         const userId = searchParams.get('userId');
 
-        if (!userId) {
-            return NextResponse.json({ error: 'Missing user ID' }, { status: 400 });
+
+        // Validate user ID format
+        if (!userId || userId === 'undefined' || !mongoose.Types.ObjectId.isValid(userId)) {
+            return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
         }
 
         await connectToDatabase();
@@ -69,7 +71,7 @@ export async function GET(req: Request) {
         const chats = await Chat.find({
             participants: userId
         })
-            .populate('participants', 'name avatar uniqueId status gender country')
+            .populate('participants', 'name avatar uniqueId status gender country publicKey')
             .sort({ updatedAt: -1 });
 
         return NextResponse.json({ chats });

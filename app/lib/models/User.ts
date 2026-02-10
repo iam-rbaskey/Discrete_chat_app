@@ -11,6 +11,8 @@ export interface IUser {
     country: string;
     avatar: string;
     status: 'online' | 'offline' | 'busy';
+    publicKey?: string;
+    encryptedPrivateKey?: string;
     createdAt: Date;
 }
 
@@ -23,6 +25,8 @@ const UserSchema = new Schema<IUser>({
     country: { type: String, required: true },
     avatar: { type: String, default: '' }, // No profile picture uploaded, will use initials
     status: { type: String, default: 'online' },
+    publicKey: { type: String }, // For E2EE: Public RSA Key (PEM or JWK string)
+    encryptedPrivateKey: { type: String, select: false }, // Optional: Encrypted Private Key for multi-device sync (future)
     createdAt: { type: Date, default: Date.now },
 });
 

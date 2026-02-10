@@ -23,7 +23,9 @@ import {
 import { clsx } from "clsx";
 import { Avatar } from "./components/ui/Avatar";
 import { Button } from "./components/ui/Button";
-import { encryptMessage, decryptMessage } from "@/app/lib/encryption";
+import { encryptMessage as encryptLegacy } from "@/app/lib/encryption";
+import { loadKeyPair, importPublicKey, encryptMessageForUser } from "@/app/lib/security";
+import { MessageContent } from "@/app/components/MessageContent";
 
 interface User {
   id: string; // This is the uniqueId (JHKZZ) or mapped _id? Database has _id and uniqueId. Let's use _id for internal logic.
@@ -33,6 +35,7 @@ interface User {
   email: string;
   avatar: string;
   status: 'online' | 'offline' | 'busy';
+  publicKey?: string; // Added for E2EE
 }
 
 interface Message {
@@ -40,18 +43,20 @@ interface Message {
   chatId: string;
   senderId: string;
   content: string;
-  isRead: boolean;
   createdAt: string;
+  isRead: boolean;
+  iv?: string; // For E2EE
+  encryptedKey?: string; // For E2EE
 }
 
 interface Chat {
   _id: string;
   participants: User[];
-  initiator: string;
-  status: 'pending' | 'active' | 'rejected' | 'blocked';
-  lastMessage?: string;
+  lastMessage: string;
   updatedAt: string;
-  unreadCount?: number; // Optional until implemented
+  unreadCount?: number;
+  status?: 'active' | 'rejected' | 'pending';
+  initiator?: string;
 }
 
 export default function Home() {
@@ -61,6 +66,12 @@ export default function Home() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [keyPair, setKeyPair] = useState<CryptoKeyPair | null>(null);
+
+  // Load E2EE Keys
+  useEffect(() => {
+    loadKeyPair().then(setKeyPair);
+  }, []);
 
   // Chat State
   const [messages, setMessages] = useState<Message[]>([]);
@@ -147,10 +158,23 @@ export default function Home() {
     if (!userData) {
       router.push('/login');
     } else {
-      const parsedUser = JSON.parse(userData);
-      // Ensure _id exists, if not map id to _id (legacy check)
-      if (!parsedUser._id && parsedUser.id) parsedUser._id = parsedUser.id;
-      setUser(parsedUser);
+      try {
+        const parsedUser = JSON.parse(userData);
+        // Ensure _id exists, if not map id to _id (legacy check)
+        if (!parsedUser._id && parsedUser.id) parsedUser._id = parsedUser.id;
+
+        if (!parsedUser._id) {
+          console.error("User data missing _id in storage", parsedUser);
+          localStorage.removeItem('user');
+          router.push('/login');
+          return;
+        }
+        setUser(parsedUser);
+      } catch (e) {
+        console.error("Failed to parse user data", e);
+        localStorage.removeItem('user');
+        router.push('/login');
+      }
     }
 
     return () => window.removeEventListener("resize", checkMobile);
@@ -162,7 +186,7 @@ export default function Home() {
     if (!user?._id) return;
 
     const fetchChats = () => {
-      fetch(`/api/chats?userId=${user._id}`)
+      fetch(`/api/chats?userId=${user._id || ''}`)
         .then(res => res.json())
         .then(data => {
           if (data.chats) {
@@ -190,7 +214,7 @@ export default function Home() {
 
       setIsSearching(true);
       try {
-        const res = await fetch(`/api/users/search?q=${searchQuery}&currentUserId=${user._id}`);
+        const res = await fetch(`/api/users/search?q=${searchQuery}&currentUserId=${user._id || ''}`);
         const data = await res.json();
         setSearchResults(data.users || []);
       } catch (error) {
@@ -249,8 +273,27 @@ export default function Home() {
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !activeChatId || !user) return;
 
-    // ENCRYPT HERE
-    const encryptedContent = encryptMessage(newMessage);
+    let finalContent = "";
+
+    // 1. Try E2EE Encryption
+    try {
+      const activeChatParams = activeChat?.participants || [];
+      const recipient = activeChatParams.find((p: any) => p._id !== user._id);
+
+      if (recipient && recipient.publicKey) {
+        const recipientKey = await importPublicKey(JSON.parse(recipient.publicKey));
+        finalContent = await encryptMessageForUser(newMessage, recipientKey);
+        console.log("E2EE Encrypted");
+      }
+    } catch (e) {
+      console.error("E2EE Encryption failed, falling back", e);
+    }
+
+    // 2. Fallback to Legacy Encryption if E2EE failed or not possible
+    if (!finalContent) {
+      finalContent = encryptLegacy(newMessage);
+      console.log("Legacy Encrypted");
+    }
 
     try {
       const res = await fetch('/api/messages', {
@@ -259,7 +302,7 @@ export default function Home() {
         body: JSON.stringify({
           chatId: activeChatId,
           senderId: user._id,
-          content: encryptedContent // Send encrypted
+          content: finalContent
         })
       });
 
@@ -280,7 +323,11 @@ export default function Home() {
   };
 
   const startChat = async (selectedUser: User) => {
-    if (!user) return;
+    if (!user?._id) {
+      console.error("User ID missing", user);
+      alert("User session invalid. Please log in again.");
+      return;
+    }
     console.log("Starting chat with:", selectedUser);
     setSearchQuery("");
     setSearchResults([]);
@@ -294,9 +341,11 @@ export default function Home() {
           targetUserId: selectedUser._id
         })
       });
+      console.log("Create chat response status:", res.status);
       const data = await res.json();
+      console.log("Create chat data:", data);
 
-      if (data.chat) {
+      if (res.ok && data.chat) {
         // Check if chat already exists in list
         setChats(prev => {
           const exists = prev.find(c => c._id === data.chat._id);
@@ -304,9 +353,11 @@ export default function Home() {
           return [data.chat, ...prev];
         });
         setActiveChatId(data.chat._id);
+      } else {
+        alert(`Failed to link: ${data.error || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error("Failed to crate chat", error);
+      console.error("Failed to create chat", error);
       alert("Failed to initiate link.");
     }
   };
@@ -349,54 +400,59 @@ export default function Home() {
   return (
     <div className="flex h-screen overflow-hidden bg-[--color-background] text-[--color-text-primary] selection:bg-[--color-accent] selection:text-black">
 
-      {/* Background Ambient Glow */}
-      <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0 overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[--color-secondary] opacity-[0.15] blur-[120px] rounded-full animate-pulse-slow"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[--color-accent] opacity-[0.1] blur-[120px] rounded-full animate-pulse-slow" style={{ animationDelay: '2s' }}></div>
+      {/* Background Ambient Glow (Reduced opacity, no scanline or blur overlays that block view) */}
+      <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0 overflow-hidden bg-black">
+        <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-zinc-900 opacity-20 blur-[150px] rounded-full"></div>
+        <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-zinc-800 opacity-20 blur-[150px] rounded-full"></div>
       </div>
 
       {/* Sidebar */}
       <aside
         className={clsx(
-          "flex flex-col border-r border-white/5 md:w-80 lg:w-96 w-full absolute md:relative z-10 h-full glass-premium transition-transform duration-300",
+          "flex flex-col border-r border-zinc-800 md:w-80 lg:w-96 w-full absolute md:relative z-10 h-full bg-black transition-transform duration-300",
           activeChatId && isMobile ? "-translate-x-full" : "translate-x-0"
         )}
       >
         {/* Header */}
-        <header className="p-5 flex items-center justify-between border-b border-white/5 backdrop-blur-md">
-          <div className="flex items-center gap-3">
+        <header className="p-5 flex items-center justify-between border-b border-zinc-800 bg-black relative z-20">
+
+          <div className="flex items-center gap-4 relative z-10">
             <Link href="/profile">
               <div className="relative group cursor-pointer">
                 <Avatar
                   name={user.name}
                   size="md"
                   status={user.status || 'online'}
-                  className="ring-2 ring-[--color-accent]/50 shadow-[0_0_15px_rgba(6,182,212,0.3)] transition-all group-hover:shadow-[0_0_25px_rgba(6,182,212,0.5)]"
+                  className="ring-1 ring-zinc-700 shadow-none transition-all group-hover:ring-zinc-500 rounded-full"
                 />
               </div>
             </Link>
             <div>
-              <h1 className="font-bold text-lg leading-tight tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Orbital Chat</h1>
+              <h1 className="font-bold text-lg leading-tight tracking-[0.1em] text-white font-mono nodus-glow-text">
+                NODUS <span className="text-white/30 text-xs text-none">::</span> CHAT
+              </h1>
               <button
                 onClick={() => {
                   const next = (user.status === 'online' || !user.status) ? 'busy' : user.status === 'busy' ? 'offline' : 'online';
                   handleStatusChange(next);
                 }}
-                className="text-[10px] text-[--color-accent] uppercase tracking-widest flex items-center gap-1 font-semibold hover:opacity-80 transition-opacity focus:outline-none mt-1"
+                className="text-[9px] text-zinc-400 uppercase tracking-widest flex items-center gap-2 font-semibold hover:text-white transition-colors focus:outline-none mt-1 group"
                 title="Click to toggle status"
               >
-                <div className={clsx("w-2 h-2 rounded-full mr-1 transition-colors duration-300",
-                  (user.status === 'online' || !user.status) ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" :
-                    user.status === 'busy' ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]" :
-                      "bg-slate-500"
+                <div className={clsx("w-1.5 h-1.5 rounded-none rotate-45 transition-all duration-300 shadow-[0_0_5px_currentColor]",
+                  (user.status === 'online' || !user.status) ? "bg-white text-white group-hover:shadow-[0_0_10px_white]" :
+                    user.status === 'busy' ? "bg-zinc-500 text-zinc-500" :
+                      "bg-zinc-800 text-zinc-800"
                 )} />
-                {user.status || 'ONLINE'}
+                <span className="group-hover:tracking-[0.2em] transition-all duration-300">
+                  {user.status === 'online' || !user.status ? 'CONNECTED' : user.status?.toUpperCase()}
+                </span>
               </button>
             </div>
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1 relative z-10">
             <Link href="/profile">
-              <Button variant="ghost" size="icon" className="hover:bg-white/5 hover:text-[--color-accent] transition-colors">
+              <Button variant="ghost" size="icon" className="hover:bg-white/5 hover:text-[--color-accent] transition-colors hover:rotate-90 duration-500">
                 <Settings className="w-5 h-5" />
               </Button>
             </Link>
@@ -404,38 +460,46 @@ export default function Home() {
         </header>
 
         {/* Search */}
-        <div className="px-5 py-4 relative z-20">
+        <div className="px-5 py-4 border-b border-zinc-800 relative z-20">
           <div className="relative group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-[--color-accent] transition-colors" />
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className="h-4 w-4 text-zinc-500 group-focus-within:text-white transition-colors" />
+            </div>
             <input
+              type="text"
+              className="block w-full pl-10 pr-3 py-2.5 border-none rounded-lg bg-zinc-900 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all text-sm font-mono tracking-wide"
+              placeholder="SEARCH_SIGNAL_ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-black/20 border border-white/5 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-[--color-accent]/50 focus:bg-black/40 transition-all placeholder:text-slate-600 shadow-inner"
-              placeholder="Search via Signal ID..."
             />
+            {isSearching && (
+              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                <div className="w-4 h-4 border-2 border-zinc-600 border-t-white rounded-full animate-spin"></div>
+              </div>
+            )}
           </div>
 
           {/* Search Results Dropdown */}
           <AnimatePresence>
             {searchResults.length > 0 && (
               <motion.div
-                initial={{ opacity: 0, y: -10 }}
+                initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="absolute top-full left-0 right-0 mt-2 mx-5 bg-[#050b18] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 max-h-64 overflow-y-auto"
+                exit={{ opacity: 0, y: -5 }}
+                className="absolute top-full left-0 right-0 mt-1 mx-3 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl overflow-hidden z-50 max-h-64 overflow-y-auto"
               >
-                <div className="p-2">
-                  <h3 className="text-[10px] uppercase text-slate-500 font-bold px-3 py-2 tracking-wider">Detected Signals in the Network</h3>
+                <div className="p-1">
+                  <h3 className="text-[10px] uppercase text-zinc-500 font-bold px-3 py-2 tracking-wider border-b border-zinc-800 mb-1">Detected Signals</h3>
                   {searchResults.map(result => (
                     <div
-                      key={result.uniqueId}
+                      key={result._id}
                       onClick={() => startChat(result)}
-                      className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors group"
+                      className="flex items-center gap-3 p-2 hover:bg-zinc-800 rounded-md cursor-pointer transition-colors group"
                     >
-                      <Avatar name={result.name} size="sm" className="ring-1 ring-white/10" />
+                      <Avatar name={result.name} size="sm" className="bg-zinc-800 text-zinc-400 group-hover:text-white group-hover:bg-zinc-700 transition-colors" />
                       <div>
-                        <p className="text-sm font-semibold text-slate-200 group-hover:text-white">{result.name}</p>
-                        <p className="text-[10px] text-[--color-accent] font-mono tracking-wider">ID: {result.uniqueId}</p>
+                        <p className="text-sm font-semibold text-zinc-300 group-hover:text-white font-mono">{result.name}</p>
+                        <p className="text-[10px] text-zinc-500 group-hover:text-zinc-400 font-mono tracking-wider">ID: {result.uniqueId}</p>
                       </div>
                     </div>
                   ))}
@@ -445,12 +509,12 @@ export default function Home() {
 
             {searchQuery.length > 2 && searchResults.length === 0 && !isSearching && (
               <motion.div
-                initial={{ opacity: 0, y: -10 }}
+                initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="absolute top-full left-0 right-0 mt-2 mx-5 bg-[#050b18] border border-white/10 rounded-xl p-4 text-center z-50"
+                className="absolute top-full left-0 right-0 mt-1 mx-3 bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-center z-50"
               >
-                <p className="text-xs text-slate-500">No signals detected for "{searchQuery}"</p>
+                <p className="text-xs text-zinc-400 font-mono">SIGNAL_NOT_FOUND: &quot;{searchQuery}&quot;</p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -460,59 +524,63 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-3 space-y-1 mt-2">
           {chats.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center opacity-50 p-8 h-full">
-              <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/10">
-                <MessageSquare className="w-6 h-6 text-slate-500" />
+              <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-4 border border-zinc-800">
+                <MessageSquare className="w-6 h-6 text-zinc-600" />
               </div>
-              <p className="text-sm text-slate-400 mb-1">No Active Transmissions</p>
-              <p className="text-xs text-slate-600">Search for a Signal ID to initiate link.</p>
+              <p className="text-sm text-zinc-400 mb-1 font-bold tracking-wide">NO ACTIVE TRANSMISSIONS</p>
+              <p className="text-xs text-zinc-600 font-mono">Search Signal ID to initiate link.</p>
             </div>
           ) : (
-            chats.map((chat) => {
+            chats.map((chat, index) => {
               const otherParticipant = chat.participants.find((p: User) => p._id !== user._id) || chat.participants[0];
               const isActive = activeChatId === chat._id;
 
               return (
                 <motion.div
-                  // layoutId={`chat-${chat._id}`} // Can cause issues if reusing ID
                   key={chat._id}
+                  layout
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.05 }}
                   onClick={() => handleChatSelect(chat._id)}
                   className={clsx(
-                    "p-3 rounded-2xl cursor-pointer flex items-center gap-4 transition-all border border-transparent hover:border-white/5 hover:bg-white/5 relative overflow-hidden group",
-                    isActive ? "bg-white/5 border-[--color-accent]/20 shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]" : ""
+                    "p-3 rounded-lg cursor-pointer flex items-center gap-3 transition-colors border relative overflow-hidden group",
+                    isActive
+                      ? "bg-zinc-900 border-zinc-700"
+                      : "border-transparent hover:bg-zinc-900/50 hover:border-zinc-800"
                   )}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
+                  whileHover={{ x: 2 }}
                 >
-                  {isActive && <div className="absolute inset-0 bg-gradient-to-r from-[--color-accent]/10 to-transparent opacity-50 pointer-events-none" />}
+                  {/* Active Indicator Bar */}
+                  {isActive && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white" />}
 
                   <Avatar
                     name={otherParticipant.name}
                     status={otherParticipant.status}
                     size="lg"
-                    className={clsx(isActive ? "ring-2 ring-[--color-accent]/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]" : "")}
+                    className={clsx(isActive ? "ring-2 ring-zinc-500" : "group-hover:ring-1 group-hover:ring-zinc-700")}
                   />
 
                   <div className="flex-1 min-w-0 z-10">
                     <div className="flex justify-between items-baseline mb-1">
-                      <h3 className={clsx("font-semibold truncate tracking-wide text-sm", isActive ? "text-[--color-accent] neon-text-cyan" : "text-slate-200")}>
+                      <h3 className={clsx("font-semibold truncate tracking-wide text-sm font-mono", isActive ? "text-white" : "text-zinc-400 group-hover:text-zinc-200")}>
                         {otherParticipant.name}
                       </h3>
-                      <span className="text-[10px] text-slate-500 font-mono">
-                        {/* Time format needed */}
+                      <span className="text-[9px] text-zinc-600 font-mono group-hover:text-zinc-500">
+                        CMD_READY
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 truncate group-hover:text-slate-300 transition-colors font-light">
+                    <p className="text-xs text-zinc-600 truncate group-hover:text-zinc-500 transition-colors font-light flex items-center gap-1">
                       {chat.status === 'pending' ? (
-                        <span className="italic text-[--color-secondary]">Link Authorization Pending...</span>
+                        <span className="italic text-amber-500">Authorization Pending...</span>
                       ) : (
-                        chat.lastMessage || "No messages yet"
+                        <>
+                          <span className={clsx("w-1 h-1 rounded-full inline-block mb-0.5", isActive ? "bg-white" : "bg-zinc-600")}></span>
+                          {chat.lastMessage || "No messages yet"}
+                        </>
                       )}
                     </p>
                   </div>
-
-                  {chat.status === 'pending' && chat.initiator !== user._id && (
-                    <div className="w-2 h-2 rounded-full bg-[--color-secondary] animate-pulse shadow-[0_0_5px_var(--color-secondary)]"></div>
-                  )}
                 </motion.div>
               );
             })
@@ -522,13 +590,13 @@ export default function Home() {
 
       {/* Main Chat Area */}
       <main className={clsx(
-        "flex-1 flex flex-col relative w-full h-full transition-transform duration-300 md:translate-x-0 absolute md:relative z-20",
+        "flex-1 flex flex-col relative w-full h-full transition-transform duration-300 md:translate-x-0 absolute md:relative z-20 bg-black",
         activeChatId || !isMobile ? "translate-x-0" : "translate-x-full"
       )}>
         {activeChat ? (
           <>
             {/* Chat Header */}
-            <header className="px-6 py-4 flex items-center justify-between border-b border-white/5 bg-[--color-surface]/80 backdrop-blur-xl sticky top-0 z-30 shadow-lg shadow-black/20">
+            <header className="px-6 py-4 flex items-center justify-between border-b border-zinc-800 bg-black sticky top-0 z-30">
               {/* Need to find other participant again */}
               {(() => {
                 const otherParticipant = activeChat.participants.find((p: User) => p._id !== user._id) || activeChat.participants[0];
@@ -537,18 +605,22 @@ export default function Home() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="md:hidden text-slate-400"
+                      className="md:hidden text-zinc-500"
                       onClick={handleBackToSafe}
                     >
                       <ChevronLeft className="w-6 h-6" />
                     </Button>
-                    <Avatar name={otherParticipant.name} size="md" status={otherParticipant.status} className="ring-1 ring-white/20" />
+                    <div className="relative">
+                      <Avatar name={otherParticipant.name} size="md" status={otherParticipant.status} className="ring-1 ring-zinc-700 shadow-none" />
+                    </div>
+
                     <div className="flex flex-col">
-                      <h2 className="font-bold text-base leading-tight flex items-center gap-2 text-white tracking-wide">
+                      <h2 className="font-bold text-base leading-tight flex items-center gap-2 text-white tracking-wide font-mono">
                         {otherParticipant.name}
                       </h2>
-                      <span className="text-[10px] text-[--color-accent] uppercase tracking-wider font-semibold">
-                        SIGNAL: {otherParticipant.uniqueId} <span className="opacity-50 mx-1">|</span> {otherParticipant.status || 'OFFLINE'}
+                      <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold flex items-center gap-2">
+                        <span className={clsx("w-1.5 h-1.5 rounded-full", otherParticipant.status === 'online' ? "bg-emerald-500" : "bg-zinc-600")}></span>
+                        SIG_ID: {otherParticipant.uniqueId}
                       </span>
                     </div>
                   </div>
@@ -562,7 +634,7 @@ export default function Home() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all rounded-full"
+                      className="text-zinc-500 hover:text-red-400 hover:bg-zinc-900 transition-all rounded-full group"
                       title="Destroy Transmission"
                       onClick={handleDestroyTransmission}
                     >
@@ -570,11 +642,11 @@ export default function Home() {
                     </Button>
                   </>
                 )}
-                <div className="w-px h-6 bg-white/10 mx-2 hidden md:block"></div>
+                <div className="w-px h-6 bg-zinc-800 mx-2 hidden md:block"></div>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className={clsx("text-slate-400 hover:text-white transition-all", showDetails && "text-[--color-accent] bg-[--color-accent]/10")}
+                  className={clsx("text-zinc-500 hover:text-white transition-all", showDetails && "text-white bg-zinc-900")}
                   onClick={() => setShowDetails(!showDetails)}
                 >
                   <Info className="w-5 h-5" />
@@ -583,44 +655,47 @@ export default function Home() {
             </header>
 
             {/* Messages Area or Authorization Area */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 scrollbar-hide relative flex flex-col">
-              {/* Grid Background Effect */}
-              <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)] pointer-events-none" />
+            <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 scrollbar-hide relative flex flex-col bg-zinc-950/50">
 
               {/* Status Check */}
               {activeChat.status === 'pending' ? (
-                <div className="flex-1 flex flex-col items-center justify-center z-10">
-                  <div className="max-w-md w-full glass-premium p-8 rounded-2xl border border-[--color-secondary]/30 text-center relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-[--color-secondary] animate-pulse"></div>
+                <div className="flex-1 flex flex-col items-center justify-center z-10 p-4">
+                  <div className="max-w-md w-full bg-zinc-900 p-8 rounded-2xl border border-zinc-800 text-center relative overflow-hidden">
 
-                    <Lock className="w-12 h-12 text-[--color-secondary] mx-auto mb-4" />
+                    <div className="relative">
+                      <div className="w-16 h-16 mx-auto mb-6 relative flex items-center justify-center rounded-full bg-zinc-800 border border-zinc-700">
+                        <Lock className="w-6 h-6 text-zinc-400 relative z-10" />
+                      </div>
+                    </div>
 
-                    <h3 className="text-xl font-bold text-white mb-2">Secure Link Authorization Required</h3>
+                    <h3 className="text-xl font-bold text-white mb-2 font-mono tracking-wide">SECURE LINK PROTOCOL</h3>
 
                     {activeChat.initiator === user._id ? (
-                      <p className="text-slate-400 text-sm mb-6">
-                        You have initiated a secure link protocol. Waiting for the recipient to authorize the connection.
+                      <p className="text-zinc-500 text-sm mb-6 font-mono">
+                        Awaiting recipient authorization handshake...
                         <br /><br />
-                        <span className="text-[10px] uppercase tracking-widest text-[--color-secondary]">Status: Pending Approval</span>
+                        <span className="text-[10px] uppercase tracking-widest text-zinc-600">Status: Pending Approval</span>
                       </p>
                     ) : (
                       <>
-                        <p className="text-slate-400 text-sm mb-6">
-                          Incoming transmission request. To establish a secure channel, you must authorize this link.
+                        <p className="text-zinc-500 text-sm mb-6 font-mono">
+                          Incoming transmission request detected.
+                          <br />
+                          Authorize to establish encrypted tunnel.
                         </p>
                         <div className="flex gap-4 justify-center">
                           <Button
                             onClick={() => handleChatAction('active')}
-                            className="bg-emerald-500 hover:bg-emerald-600 text-white border-none shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                            className="bg-white hover:bg-zinc-200 text-black border-none shadow-none transition-all font-mono tracking-wider font-bold"
                           >
-                            Authorize Link
+                            [ AUTHORIZE ]
                           </Button>
                           <Button
                             onClick={() => handleChatAction('rejected')}
                             variant="ghost"
-                            className="text-red-400 border border-red-500/30 hover:bg-red-500/10"
+                            className="text-zinc-500 border border-zinc-700 hover:bg-zinc-800 hover:text-white font-mono"
                           >
-                            Terminate
+                            [ TERMINATE ]
                           </Button>
                         </div>
                       </>
@@ -630,57 +705,65 @@ export default function Home() {
               ) : (
                 // Active Chat Messages
                 <div className="w-full flex-1 flex flex-col justify-end space-y-4 min-h-0">
+                  {/* Empty State / Start of Encrypted Chat */}
                   {messages.length === 0 && (
-                    <div className="flex-1 flex flex-col items-center justify-center z-10 opacity-50 mb-auto">
-                      <p className="text-slate-500 text-sm">Secure Channel Established.</p>
-                      <p className="text-slate-600 text-xs mt-2">All messages are end-to-end encrypted.</p>
+                    <div className="flex-1 flex flex-col items-center justify-center z-10 opacity-70 mb-auto">
+                      <div className="w-16 h-16 rounded-full border border-zinc-800 flex items-center justify-center mb-4 bg-zinc-900">
+                        <Lock className="w-6 h-6 text-zinc-500" />
+                      </div>
+                      <p className="text-zinc-300 text-sm font-mono tracking-wider">SECURE CHANNEL ESTABLISHED</p>
+                      <p className="text-zinc-600 text-xs mt-2 font-mono">End-to-end encryption active.</p>
                     </div>
                   )}
 
-                  {messages.map((msg) => {
-                    const isMe = msg.senderId === user._id;
-                    const decryptedContent = decryptMessage(msg.content); // Decrypt on render
+                  <AnimatePresence>
+                    {messages.map((msg) => {
+                      const isMe = msg.senderId === user._id;
 
-                    return (
-                      <motion.div
-                        key={msg._id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={clsx(
-                          "flex gap-3 max-w-[85%] relative z-10",
-                          isMe ? "ml-auto flex-row-reverse" : ""
-                        )}
-                      >
-                        {/* Only show avatar for other person */}
-                        {!isMe && (
-                          <div className="mt-auto">
-                            <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-[10px] text-slate-400 border border-white/10 flex-shrink-0">
-                              {/* Simplified Avatar usage or fetch user */}
-                              {/* For now, just a placeholder or could pass otherParticipant name if available */}
+                      return (
+                        <motion.div
+                          key={msg._id}
+                          initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          className={clsx(
+                            "flex gap-3 max-w-[85%] relative z-10 group",
+                            isMe ? "ml-auto flex-row-reverse" : ""
+                          )}
+                        >
+                          {/* Only show avatar for other person */}
+                          {!isMe && (
+                            <div className="mt-auto">
+                              <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-white border border-zinc-700 flex-shrink-0">
+                                <span className="font-bold font-mono">{(activeChat?.participants.find((p: User) => p._id !== user._id)?.name || "?")[0]}</span>
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        <div className={clsx(
-                          "flex flex-col gap-1 min-w-[60px]",
-                          isMe ? "items-end" : "items-start"
-                        )}>
                           <div className={clsx(
-                            "px-4 py-3 rounded-2xl text-sm leading-relaxed relative group transition-all duration-300 break-words max-w-full text-left font-mono",
-                            isMe
-                              ? "bg-[--color-accent]/10 border border-[--color-accent]/20 text-[--color-accent] rounded-br-none shadow-[0_0_15px_rgba(6,182,212,0.1)]"
-                              : "glass-card text-slate-200 rounded-bl-none hover:bg-white/5 border border-white/10"
+                            "flex flex-col gap-1 min-w-[60px]",
+                            isMe ? "items-end" : "items-start"
                           )}>
-                            {decryptedContent}
-                          </div>
+                            <div className={clsx(
+                              "px-4 py-3 rounded-lg text-sm leading-relaxed relative transition-all duration-300 break-words max-w-full text-left font-mono border",
+                              isMe
+                                ? "bg-zinc-100 border-zinc-200 text-black rounded-br-none"
+                                : "bg-zinc-900 text-zinc-300 rounded-bl-none border-zinc-800"
+                            )}>
+                              <MessageContent
+                                content={msg.content}
+                                privateKey={keyPair?.privateKey || null}
+                                isMe={isMe}
+                              />
+                            </div>
 
-                          <span className="text-[9px] text-slate-600 font-mono px-1">
-                            {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
+                            <span className="text-[9px] text-zinc-600 font-mono px-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
                   <div ref={messagesEndRef} />
                 </div>
               )}
@@ -688,12 +771,10 @@ export default function Home() {
 
             {/* Input Area - Only if Active */}
             {activeChat.status === 'active' && (
-              <div className="p-4 md:p-6 bg-transparent sticky bottom-0 z-40">
-                <div className="absolute inset-0 bg-gradient-to-t from-[--color-background] via-[--color-background] to-transparent pointer-events-none" />
-
+              <div className="p-4 md:p-6 bg-black sticky bottom-0 z-40 border-t border-zinc-900">
                 <div className="flex items-end gap-3 max-w-4xl mx-auto relative z-10">
-                  <div className="flex-1 glass-premium rounded-2xl flex items-center p-2 focus-within:ring-1 focus-within:ring-[--color-accent]/50 focus-within:shadow-[0_0_20px_rgba(6,182,212,0.15)] transition-all">
-                    <Button variant="ghost" size="icon" className="text-slate-400 hover:text-[--color-accent] hover:bg-transparent">
+                  <div className="flex-1 bg-zinc-900 rounded-lg flex items-center p-2 focus-within:ring-1 focus-within:ring-zinc-700 transition-all border border-zinc-800">
+                    <Button variant="ghost" size="icon" className="text-zinc-500 hover:text-white hover:bg-transparent transition-colors">
                       <Smile className="w-5 h-5" />
                     </Button>
 
@@ -706,13 +787,13 @@ export default function Home() {
                           handleSendMessage();
                         }
                       }}
-                      className="flex-1 bg-transparent border-0 focus:ring-0 text-sm text-slate-100 placeholder:text-slate-600 resize-none max-h-32 py-3 px-2 scrollbar-hide font-light focus:outline-none focus-visible:ring-0"
-                      placeholder="Transmit data..."
+                      className="flex-1 bg-transparent border-0 focus:ring-0 text-sm text-white placeholder:text-zinc-600 resize-none max-h-32 py-3 px-2 scrollbar-hide font-mono focus:outline-none focus-visible:ring-0 caret-white"
+                      placeholder="INITIATE_DATA_STREAM..."
                       rows={1}
                       style={{ minHeight: '44px' }}
                     />
 
-                    <Button variant="ghost" size="icon" className="text-slate-400 hover:text-[--color-accent] hover:bg-transparent">
+                    <Button variant="ghost" size="icon" className="text-zinc-500 hover:text-white hover:bg-transparent transition-colors">
                       <Paperclip className="w-5 h-5" />
                     </Button>
                   </div>
@@ -720,37 +801,38 @@ export default function Home() {
                   <Button
                     onClick={handleSendMessage}
                     disabled={!newMessage.trim()}
-                    className="h-12 w-12 rounded-2xl bg-[--color-accent] text-black hover:bg-[--color-accent] hover:scale-105 transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)] flex-shrink-0 flex items-center justify-center group disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="h-12 w-12 rounded-lg bg-white text-black hover:bg-zinc-200 transition-all shadow-none flex-shrink-0 flex items-center justify-center group disabled:opacity-50 disabled:cursor-not-allowed border border-transparent"
                   >
-                    <Send className="w-5 h-5 ml-0.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                    <Send className="w-5 h-5 ml-0.5" />
                   </Button>
                 </div>
               </div>
             )}
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-0 animate-[fadeIn_0.5s_ease-out_forwards] select-none relative z-20">
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-0 animate-[fadeIn_0.5s_ease-out_forwards] select-none relative z-20 bg-zinc-950/50">
             <div className="relative mb-8">
-              <div className="absolute inset-0 bg-[--color-accent] blur-[60px] opacity-20 animate-pulse-slow"></div>
-              <div className="w-32 h-32 rounded-3xl bg-black/40 border border-white/10 flex items-center justify-center backdrop-blur-xl shadow-2xl relative z-10 ring-1 ring-white/5">
-                <MessageSquare className="w-12 h-12 text-[--color-accent]" />
+              <div className="w-32 h-32 rounded-full border border-zinc-800 flex items-center justify-center bg-zinc-900">
+                <MessageSquare className="w-12 h-12 text-zinc-700" />
               </div>
             </div>
 
-            <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-white to-slate-500 mb-4 tracking-tight">System Ready</h2>
-            <p className="max-w-xs text-slate-400 font-light leading-relaxed">Establish a secure connection. Select a frequency to begin transmission.</p>
+            <h2 className="text-3xl font-bold text-white mb-2 tracking-tighter font-mono">SYSTEM READY</h2>
+            <p className="max-w-xs text-zinc-500 font-mono text-sm leading-relaxed">
+              Encryption protocols loaded. <br /> Select frequency.
+            </p>
 
-            <div className="mt-12 grid grid-cols-3 gap-6">
+            <div className="mt-12 grid grid-cols-3 gap-8">
               {[
-                { icon: Zap, label: "Neural\nSync", color: "text-[--color-secondary]" },
-                { icon: Clock, label: "Reminders\nActive", color: "text-[--color-accent]" },
-                { icon: Lock, label: "Encrypted\nchannel", color: "text-emerald-400" }
+                { icon: Zap, label: "NEURAL\nSYNC" },
+                { icon: Clock, label: "TEMPORAL\nLOGS" },
+                { icon: Lock, label: "QUANTUM\nCRYPT" }
               ].map((item, i) => (
-                <div key={i} className="flex flex-col items-center gap-3 group cursor-default">
-                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-center group-hover:bg-white/10 group-hover:border-white/10 transition-all group-hover:scale-110">
-                    <item.icon className={clsx("w-5 h-5", item.color)} />
+                <div key={i} className="flex flex-col items-center gap-4 group cursor-pointer hover:-translate-y-1 transition-transform duration-300">
+                  <div className="w-12 h-12 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center transition-all group-hover:border-zinc-700 text-zinc-600 group-hover:text-white">
+                    <item.icon className="w-5 h-5" />
                   </div>
-                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold whitespace-pre-line leading-relaxed">{item.label}</span>
+                  <span className="text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold whitespace-pre-line leading-relaxed group-hover:text-zinc-400 transition-colors">{item.label}</span>
                 </div>
               ))}
             </div>

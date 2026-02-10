@@ -37,6 +37,7 @@ export async function POST(req: Request) {
             token,
             user: {
                 id: user._id,
+                _id: user._id, // Adding this explicitly for consistency
                 name: user.name,
                 uniqueId: user.uniqueId,
                 avatar: user.avatar,
