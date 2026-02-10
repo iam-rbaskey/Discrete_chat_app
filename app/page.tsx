@@ -425,7 +425,7 @@ export default function Home() {
                 className="absolute top-full left-0 right-0 mt-2 mx-5 bg-[#050b18] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 max-h-64 overflow-y-auto"
               >
                 <div className="p-2">
-                  <h3 className="text-[10px] uppercase text-slate-500 font-bold px-3 py-2 tracking-wider">Detected Signals</h3>
+                  <h3 className="text-[10px] uppercase text-slate-500 font-bold px-3 py-2 tracking-wider">Detected Signals in the Network</h3>
                   {searchResults.map(result => (
                     <div
                       key={result.uniqueId}
