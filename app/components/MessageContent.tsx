@@ -24,20 +24,50 @@ export const MessageContent = ({ content, privateKey, isMe }: MessageContentProp
         const decrypt = async () => {
             setIsDecrypting(true);
             setScrambleComplete(false);
+
             try {
-                // 1. Try E2EE Decryption (if private key available)
-                if (privateKey && content.includes('\"iv\":') && content.includes('\"encryptedKey\":')) {
+                // 0. Detect E2EE Format efficiently
+                let isE2EE = false;
+                if (content.trim().startsWith('{') && content.includes('"iv"')) {
+                    try {
+                        const parsed = JSON.parse(content);
+                        if (parsed.iv && parsed.ciphertext && (parsed.encryptedKey || parsed.encryptedKeySelf)) {
+                            isE2EE = true;
+                        }
+                    } catch (e) { /* Not JSON */ }
+                }
+
+                // 1. Handle E2EE
+                if (isE2EE) {
+                    if (!privateKey) {
+                        if (isMounted) {
+                            setDecryptedText("Waiting for secure keys...");
+                            setIsDecrypting(true); // Keep spinner
+                        }
+                        return;
+                    }
+
                     try {
                         const text = await decryptMessageForUser(content, privateKey);
                         if (isMounted) {
-                            setDecryptedText(text);
-                            setEncryptionType('e2ee');
+                            // Check if it returned the failure string
+                            if (text.startsWith("[Encrypted Message")) {
+                                setDecryptedText("🔒 Encrypted Message");
+                                setEncryptionType('none'); // Or 'e2ee-failed'
+                            } else {
+                                setDecryptedText(text);
+                                setEncryptionType('e2ee');
+                            }
                             setIsDecrypting(false);
                         }
                         return;
                     } catch (e) {
-                        // Fallback to legacy if E2E fails (maybe it was legacy format coincidentally?)
-                        console.warn("E2E failed, trying legacy", e);
+                        console.warn("E2E failed", e);
+                        if (isMounted) {
+                            setDecryptedText("🔒 Unreadable Message");
+                            setIsDecrypting(false);
+                        }
+                        return;
                     }
                 }
 
@@ -52,7 +82,7 @@ export const MessageContent = ({ content, privateKey, isMe }: MessageContentProp
                     return;
                 }
 
-                // 3. Fallback to plain text
+                // 3. Plain Text Fallback
                 if (isMounted) {
                     setDecryptedText(content);
                     setEncryptionType('none');
@@ -61,7 +91,7 @@ export const MessageContent = ({ content, privateKey, isMe }: MessageContentProp
             } catch (e) {
                 console.error("Decryption error", e);
                 if (isMounted) {
-                    setDecryptedText("⚠️ DECRYPTION_FAILURE");
+                    setDecryptedText("⚠️ Error");
                     setIsDecrypting(false);
                 }
             }

@@ -79,6 +79,14 @@ export default function Home() {
 
   // Heartbeat for Active Time Tracking
   useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    handleResize(); // Initial check
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Heartbeat for Active Time Tracking
+  useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
 
@@ -446,7 +454,7 @@ export default function Home() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[--color-background] text-[--color-text-primary] selection:bg-[--color-accent] selection:text-black">
+    <div className="flex h-dvh overflow-hidden bg-[--color-background] text-[--color-text-primary] selection:bg-[--color-accent] selection:text-black">
 
       {/* Background Ambient Glow (Reduced opacity, no scanline or blur overlays that block view) */}
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0 overflow-hidden bg-black">
@@ -713,7 +721,7 @@ export default function Home() {
             </header>
 
             {/* Messages Area or Authorization Area */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 scrollbar-hide relative flex flex-col bg-zinc-950/50">
+            <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 scrollbar-hide relative flex flex-col bg-zinc-950/50 pb-4">
 
               {/* Status Check */}
               {activeChat.status === 'pending' ? (
@@ -829,7 +837,7 @@ export default function Home() {
 
             {/* Input Area - Only if Active */}
             {activeChat.status === 'active' && (
-              <div className="p-4 md:p-6 bg-black sticky bottom-0 z-40 border-t border-zinc-900">
+              <div className="p-4 md:p-6 bg-black border-t border-zinc-900 shrink-0">
                 <div className="flex items-end gap-3 max-w-4xl mx-auto relative z-10">
                   <div className="flex-1 bg-zinc-900 rounded-lg flex items-center p-2 focus-within:ring-1 focus-within:ring-zinc-700 transition-all border border-zinc-800">
                     <Button variant="ghost" size="icon" className="text-zinc-500 hover:text-white hover:bg-transparent transition-colors">
