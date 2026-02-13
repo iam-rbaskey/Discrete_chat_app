@@ -4,6 +4,7 @@ import connectToDatabase from '@/app/lib/db';
 import Chat from '@/app/lib/models/Chat';
 import User from '@/app/lib/models/User';
 import mongoose from 'mongoose';
+import Message from '@/app/lib/models/Message';
 
 // Ensure User model is registered before Chat
 // This is important for population of participants
@@ -72,9 +73,19 @@ export async function GET(req: Request) {
             participants: userId
         })
             .populate('participants', 'name avatar uniqueId status gender country publicKey clearanceLevel')
-            .sort({ updatedAt: -1 });
+            .sort({ updatedAt: -1 })
+            .lean();
 
-        return NextResponse.json({ chats });
+        const chatsWithUnread = await Promise.all(chats.map(async (chat: any) => {
+            const unreadCount = await Message.countDocuments({
+                chatId: chat._id,
+                senderId: { $ne: userId },
+                isRead: false
+            });
+            return { ...chat, unreadCount };
+        }));
+
+        return NextResponse.json({ chats: chatsWithUnread });
 
     } catch (error: any) {
         console.error('Get chats error:', error);

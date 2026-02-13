@@ -18,7 +18,8 @@ import {
   Smile,
   Paperclip,
   ChevronLeft,
-  Trash2
+  Trash2,
+  Bell
 } from "lucide-react";
 import { clsx } from "clsx";
 import { Avatar } from "./components/ui/Avatar";
@@ -26,6 +27,7 @@ import { Button } from "./components/ui/Button";
 import { encryptMessage as encryptLegacy } from "@/app/lib/encryption";
 import { loadKeyPair, importPublicKey, encryptMessageForUser, generateKeyPair, saveKeyPair, exportPublicKey } from "@/app/lib/security";
 import { MessageContent } from "@/app/components/MessageContent";
+import { NotificationPanel } from "@/app/components/NotificationPanel";
 
 interface User {
   id: string; // This is the uniqueId (JHKZZ) or mapped _id? Database has _id and uniqueId. Let's use _id for internal logic.
@@ -70,6 +72,7 @@ export default function Home() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [keyPair, setKeyPair] = useState<CryptoKeyPair | null>(null);
 
   // Load E2EE Keys
@@ -533,6 +536,14 @@ export default function Home() {
             </div>
           </div>
           <div className="flex gap-1 relative z-10">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-zinc-500 hover:text-white transition-colors hover:bg-white/5"
+              onClick={() => setShowNotifications(true)}
+            >
+              <Bell className="w-5 h-5" />
+            </Button>
             <Link href="/profile">
               <Button variant="ghost" size="icon" className="hover:bg-white/5 hover:text-[--color-accent] transition-colors hover:rotate-90 duration-500">
                 <Settings className="w-5 h-5" />
@@ -648,9 +659,13 @@ export default function Home() {
                       <h3 className={clsx("font-semibold truncate tracking-wide text-sm font-mono", isActive ? "text-white" : "text-zinc-400 group-hover:text-zinc-200")}>
                         {otherParticipant.name}
                       </h3>
-                      <span className="text-[9px] text-zinc-600 font-mono group-hover:text-zinc-500">
-                        CMD_READY
-                      </span>
+                      {chat.unreadCount && chat.unreadCount > 0 ? (
+                        <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] animate-pulse ml-auto" title={`${chat.unreadCount} unread`}></div>
+                      ) : (
+                        <span className="text-[9px] text-zinc-600 font-mono group-hover:text-zinc-500">
+                          CMD_READY
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-zinc-600 truncate group-hover:text-zinc-500 transition-colors font-light flex items-center gap-1">
                       {chat.status === 'pending' ? (
@@ -941,6 +956,12 @@ export default function Home() {
             animate={{ width: 0, opacity: 0 }} // Keeping hidden logic
             exit={{ width: 0, opacity: 0 }}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showNotifications && (
+          <NotificationPanel onClose={() => setShowNotifications(false)} />
         )}
       </AnimatePresence>
     </div>
