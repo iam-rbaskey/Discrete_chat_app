@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import connectToDatabase from '@/app/lib/db';
 import Notification from '@/app/lib/models/Notification';
+import mongoose from 'mongoose';
 
 export async function GET(req: Request) {
     try {
