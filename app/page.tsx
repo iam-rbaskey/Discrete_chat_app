@@ -310,8 +310,14 @@ export default function Home() {
 
       if (recipient && recipient.publicKey) {
         const recipientKey = await importPublicKey(JSON.parse(recipient.publicKey));
-        finalContent = await encryptMessageForUser(newMessage, recipientKey);
-        console.log("E2EE Encrypted");
+
+        // Encrypt for BOTH Recipient and Sender (Self)
+        if (keyPair?.publicKey) {
+          finalContent = await encryptMessageForUser(newMessage, recipientKey, keyPair.publicKey);
+        } else {
+          finalContent = await encryptMessageForUser(newMessage, recipientKey);
+        }
+        console.log("E2EE Encrypted (Dual-Lock)");
       }
     } catch (e) {
       console.error("E2EE Encryption failed, falling back", e);

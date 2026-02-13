@@ -78,9 +78,9 @@ export const importPublicKey = async (jwk: JsonWebKey): Promise<CryptoKey> => {
     );
 };
 
-// Hybrid Encryption: Encrypt message for recipient
-// Returns JSON string containing { iv, encryptedKey, ciphertext }
-export const encryptMessageForUser = async (message: string, recipientPublicKey: CryptoKey): Promise<string> => {
+// Hybrid Encryption: Encrypt message for recipient AND sender (for self-view)
+// Returns JSON string containing { iv, encryptedKey, encryptedKeySelf, ciphertext }
+export const encryptMessageForUser = async (message: string, recipientPublicKey: CryptoKey, senderPublicKey?: CryptoKey): Promise<string> => {
     // 1. Generate random AES-GCM session key
     const sessionKey = await window.crypto.subtle.generateKey(
         { name: "AES-GCM", length: 256 },
@@ -97,7 +97,7 @@ export const encryptMessageForUser = async (message: string, recipientPublicKey:
         encodedMessage
     );
 
-    // 3. Encrypt session key with recipient's RSA public key
+    // 3. Encrypt session key with RECIPIENT'S RSA public key
     const rawSessionKey = await window.crypto.subtle.exportKey("raw", sessionKey);
     const encryptedKey = await window.crypto.subtle.encrypt(
         { name: "RSA-OAEP" },
@@ -105,11 +105,22 @@ export const encryptMessageForUser = async (message: string, recipientPublicKey:
         rawSessionKey
     );
 
-    // 4. Pack into JSON
+    // 4. Encrypt session key with SENDER'S RSA public key (if provided) to allow sender to read their own msg
+    let encryptedKeySelf: ArrayBuffer | null = null;
+    if (senderPublicKey) {
+        encryptedKeySelf = await window.crypto.subtle.encrypt(
+            { name: "RSA-OAEP" },
+            senderPublicKey,
+            rawSessionKey
+        );
+    }
+
+    // 5. Pack into JSON
     return JSON.stringify({
         iv: Array.from(iv),
         ciphertext: Array.from(new Uint8Array(ciphertext)),
-        encryptedKey: Array.from(new Uint8Array(encryptedKey))
+        encryptedKey: Array.from(new Uint8Array(encryptedKey)),
+        encryptedKeySelf: encryptedKeySelf ? Array.from(new Uint8Array(encryptedKeySelf)) : null
     });
 };
 
@@ -117,20 +128,42 @@ export const encryptMessageForUser = async (message: string, recipientPublicKey:
 export const decryptMessageForUser = async (packedMessage: string, privateKey: CryptoKey): Promise<string> => {
     try {
         const data = JSON.parse(packedMessage);
-        if (!data.iv || !data.ciphertext || !data.encryptedKey) throw new Error("Invalid format");
+        if (!data.iv || !data.ciphertext || (!data.encryptedKey && !data.encryptedKeySelf)) throw new Error("Invalid format");
 
         const iv = new Uint8Array(data.iv);
         const ciphertext = new Uint8Array(data.ciphertext);
-        const encryptedKey = new Uint8Array(data.encryptedKey);
 
-        // 1. Decrypt session key with RSA private key
-        const rawSessionKey = await window.crypto.subtle.decrypt(
-            { name: "RSA-OAEP" },
-            privateKey,
-            encryptedKey
-        );
+        let rawSessionKey: ArrayBuffer | null = null;
 
-        // 2. Import session key
+        // 1. Try decrypting Repicient Key (Standard)
+        if (data.encryptedKey) {
+            try {
+                rawSessionKey = await window.crypto.subtle.decrypt(
+                    { name: "RSA-OAEP" },
+                    privateKey,
+                    new Uint8Array(data.encryptedKey)
+                );
+            } catch (e) {
+                // Ignore, might be sender reading their own message
+            }
+        }
+
+        // 2. If failed, try Self Key (Sender reading own message)
+        if (!rawSessionKey && data.encryptedKeySelf) {
+            try {
+                rawSessionKey = await window.crypto.subtle.decrypt(
+                    { name: "RSA-OAEP" },
+                    privateKey,
+                    new Uint8Array(data.encryptedKeySelf)
+                );
+            } catch (e) {
+                // Ignore
+            }
+        }
+
+        if (!rawSessionKey) throw new Error("No valid decryption key found for this user");
+
+        // 3. Import session key
         const sessionKey = await window.crypto.subtle.importKey(
             "raw",
             rawSessionKey,
@@ -139,7 +172,7 @@ export const decryptMessageForUser = async (packedMessage: string, privateKey: C
             ["decrypt"]
         );
 
-        // 3. Decrypt message content
+        // 4. Decrypt message content
         const decryptedContent = await window.crypto.subtle.decrypt(
             { name: "AES-GCM", iv },
             sessionKey,
