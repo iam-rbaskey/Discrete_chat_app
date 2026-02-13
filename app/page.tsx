@@ -24,7 +24,7 @@ import { clsx } from "clsx";
 import { Avatar } from "./components/ui/Avatar";
 import { Button } from "./components/ui/Button";
 import { encryptMessage as encryptLegacy } from "@/app/lib/encryption";
-import { loadKeyPair, importPublicKey, encryptMessageForUser } from "@/app/lib/security";
+import { loadKeyPair, importPublicKey, encryptMessageForUser, generateKeyPair, saveKeyPair, exportPublicKey } from "@/app/lib/security";
 import { MessageContent } from "@/app/components/MessageContent";
 
 interface User {
@@ -73,9 +73,35 @@ export default function Home() {
   const [keyPair, setKeyPair] = useState<CryptoKeyPair | null>(null);
 
   // Load E2EE Keys
+  // Load or Generate E2EE Keys
   useEffect(() => {
-    loadKeyPair().then(setKeyPair);
-  }, []);
+    if (!user?._id) return;
+
+    const initKeys = async () => {
+      try {
+        let keys = await loadKeyPair();
+        if (!keys) {
+          console.log("No keys found, generating new encryption identity...");
+          keys = await generateKeyPair();
+          await saveKeyPair(keys);
+
+          // Sync Public Key
+          const jwk = await exportPublicKey(keys.publicKey);
+          await fetch('/api/users/keys', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user._id, publicKey: JSON.stringify(jwk) })
+          });
+        }
+        setKeyPair(keys);
+      } catch (e) {
+        console.error("Key initialization system failure", e);
+        alert("Secure Channel Init Failed: Private Mode? Please disable for persistent keys.");
+      }
+    };
+
+    initKeys();
+  }, [user?._id]);
 
   // Heartbeat for Active Time Tracking
   useEffect(() => {
