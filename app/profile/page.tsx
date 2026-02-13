@@ -28,11 +28,40 @@ export default function Profile() {
 
     useEffect(() => {
         const userData = localStorage.getItem('user');
-        if (!userData) {
+        const token = localStorage.getItem('token');
+
+        if (!userData || !token) {
             router.push('/login');
-        } else {
-            setUser(JSON.parse(userData));
+            return;
         }
+
+        // 1. Initial hydration from local storage
+        setUser(JSON.parse(userData));
+
+        // 2. Fetch fresh data from server to catch updates (like clearance level)
+        const fetchMe = async () => {
+            try {
+                const res = await fetch('/api/auth/me', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    setUser(data.user);
+                    // Update storage so next reload is also fresh
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                } else if (res.status === 401) {
+                    // Token expired/invalid
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    router.push('/login');
+                }
+            } catch (err) {
+                console.error("Failed to refresh user data", err);
+            }
+        };
+
+        fetchMe();
 
         // Check if keys exist
         loadKeyPair().then(keys => {
