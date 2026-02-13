@@ -110,13 +110,19 @@ export default function AdminPanel() {
         if (!token) return;
 
         try {
-            const res = await fetch(`/api/admin/users/${notifyingUser._id}`, {
+            const res = await fetch('/api/notifications', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ message: notificationMsg })
+                body: JSON.stringify({
+                    title: "System Alert",
+                    content: notificationMsg,
+                    type: "info",
+                    active: true,
+                    recipientId: notifyingUser._id
+                })
             });
 
             if (res.ok) {
@@ -124,6 +130,8 @@ export default function AdminPanel() {
                 setNotifyingUser(null);
                 setNotificationMsg("");
             } else {
+                const err = await res.json();
+                console.error("Failed response:", err);
                 alert("Failed to dispatch notification.");
             }
         } catch (e) {
