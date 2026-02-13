@@ -13,6 +13,7 @@ const NotificationSchema: Schema = new Schema({
     content: { type: String, required: true },
     type: { type: String, enum: ['info', 'warning', 'alert', 'success'], default: 'info' },
     active: { type: Boolean, default: true },
+    recipientId: { type: Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
 export default mongoose.models.Notification || mongoose.model<INotification>('Notification', NotificationSchema);

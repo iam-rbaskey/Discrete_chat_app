@@ -1012,7 +1012,7 @@ export default function Home() {
 
       <AnimatePresence>
         {showNotifications && (
-          <NotificationPanel onClose={() => setShowNotifications(false)} />
+          <NotificationPanel onClose={() => setShowNotifications(false)} userId={user?._id} />
         )}
       </AnimatePresence>
     </div>

@@ -5,7 +5,17 @@ import Notification from '@/app/lib/models/Notification';
 export async function GET(req: Request) {
     try {
         await connectToDatabase();
-        const notifications = await Notification.find({ active: true }).sort({ createdAt: -1 }).limit(20);
+        const { searchParams } = new URL(req.url);
+        const userId = searchParams.get('userId');
+
+        const query: any = { active: true };
+        if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+            query.$or = [{ recipientId: null }, { recipientId: userId }];
+        } else {
+            query.recipientId = null;
+        }
+
+        const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(20);
         return NextResponse.json({ notifications });
     } catch (e) {
         return NextResponse.json({ error: 'Failed' }, { status: 500 });

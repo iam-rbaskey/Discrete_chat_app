@@ -10,19 +10,20 @@ interface Notification {
     createdAt: string;
 }
 
-export const NotificationPanel = ({ onClose }: { onClose: () => void }) => {
+export const NotificationPanel = ({ onClose, userId }: { onClose: () => void, userId?: string }) => {
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch('/api/notifications')
+        const url = userId ? `/api/notifications?userId=${userId}` : '/api/notifications';
+        fetch(url)
             .then(res => res.json())
             .then(data => {
                 setNotifications(data.notifications || []);
                 setLoading(false);
             })
             .catch(() => setLoading(false));
-    }, []);
+    }, [userId]);
 
     const getIcon = (type: string) => {
         switch (type) {
