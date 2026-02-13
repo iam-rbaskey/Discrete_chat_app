@@ -9,9 +9,20 @@ import { generateKeyPair, saveKeyPair, exportPublicKey, loadKeyPair } from '@/ap
 import { ShieldCheck, Loader2, ArrowLeft, User, Shield, MapPin, Activity, LogOut } from 'lucide-react';
 import { clsx } from "clsx";
 
+interface User {
+    _id: string;
+    name: string;
+    email: string;
+    uniqueId: string;
+    avatar: string;
+    status: string;
+    role: string;
+    clearanceLevel?: number;
+}
+
 export default function Profile() {
     const router = useRouter();
-    const [user, setUser] = useState<any>(null);
+    const [user, setUser] = useState<User | null>(null);
     const [generatingKeys, setGeneratingKeys] = useState(false);
     const [keysExist, setKeysExist] = useState(false);
 
@@ -87,7 +98,7 @@ export default function Profile() {
                     <div className="text-right">
                         <h2 className="text-2xl font-bold font-mono text-white tracking-wider nodus-glow-text">COMMAND_CENTER</h2>
                         <p className="text-[10px] text-zinc-500 font-mono tracking-[0.3em] uppercase opacity-70">
-                            User Clearance: Level 1
+                            User Clearance: Level {user.clearanceLevel || (user.role === 'admin' ? 5 : 1)}
                         </p>
                     </div>
                 </div>
@@ -122,7 +133,7 @@ export default function Profile() {
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                         <div className="bg-white/5 p-4 rounded-sm border-l-2 border-zinc-500 hover:bg-white/10 transition-colors group/item">
                                             <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-1 group-hover/item:text-white transition-colors">Digital Frequency</label>
                                             <p className="text-zinc-300 font-mono text-xs truncate" title={user.email}>{user.email}</p>
@@ -131,6 +142,12 @@ export default function Profile() {
                                             <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-1 group-hover/item:text-white transition-colors">Signal Signature</label>
                                             <p className="text-white font-mono text-sm font-bold tracking-widest glow-text">{user.uniqueId}</p>
                                         </div>
+                                        <div className="bg-white/5 p-4 rounded-sm border-l-2 border-indigo-500 hover:bg-white/10 transition-colors group/item">
+                                            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-1 group-hover/item:text-white transition-colors">Clearance Level</label>
+                                            <p className={clsx("font-mono text-xs font-bold tracking-widest uppercase", (user.clearanceLevel || (user.role === 'admin' ? 5 : 1)) === 5 ? "text-indigo-400 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]" : "text-zinc-400")}>
+                                                LEVEL {user.clearanceLevel || (user.role === 'admin' ? 5 : 1)} {(user.clearanceLevel === 5 || user.role === 'admin') && '(ADMIN)'}
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -138,71 +155,92 @@ export default function Profile() {
                     </div>
 
                     {/* Diagnostics / Keys Panel */}
-                    <div className="glass-premium rounded-3xl p-1 border border-white/10 relative overflow-hidden flex flex-col">
-                        <div className="bg-black/60 rounded-[22px] p-6 h-full flex flex-col relative z-20 backdrop-blur-xl">
-                            <h3 className="text-xs font-mono uppercase tracking-widest text-zinc-500 mb-6 flex items-center gap-2">
-                                <Activity className="w-3 h-3 text-white" />
-                                System Diagnostics
-                            </h3>
-
-                            <div className="flex-1 space-y-6">
-                                {/* Encryption Status */}
-                                <div className="space-y-2">
-                                    <div className="flex justify-between items-center text-xs text-zinc-500 font-mono">
-                                        <span>ENCRYPTION_PROTOCOL</span>
-                                        <span className={keysExist ? "text-emerald-400" : "text-amber-400"}>
-                                            {keysExist ? "ACTIVE" : "MISSING"}
-                                        </span>
+                    <div className="flex flex-col gap-6">
+                        {user.role === 'admin' && (
+                            <Link href="/admin" className="block relative group overflow-hidden rounded-3xl p-[1px] bg-gradient-to-br from-zinc-700 to-zinc-900 shadow-xl">
+                                <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                                <div className="bg-black rounded-[22px] p-6 relative z-10 h-full flex items-center justify-between border border-zinc-800 group-hover:border-zinc-600 transition-colors">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-white shadow-[0_0_15px_rgba(255,255,255,0.1)] group-hover:shadow-[0_0_20px_rgba(255,255,255,0.2)] transition-shadow">
+                                            <ShieldCheck className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-bold text-white font-mono tracking-wider">ADMIN_CONSOLE</h3>
+                                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">System Overwatch</p>
+                                        </div>
                                     </div>
-                                    <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                                        <div className={clsx("h-full rounded-full transition-all duration-1000 ease-out", keysExist ? "w-full bg-emerald-500 shadow-[0_0_10px_#22c55e]" : "w-[20%] bg-amber-500 animate-pulse")} />
+                                    <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center border border-zinc-800 group-hover:border-white/20 transition-colors">
+                                        <ArrowLeft className="w-4 h-4 text-zinc-500 group-hover:text-white rotate-180 transition-transform group-hover:translate-x-1" />
                                     </div>
                                 </div>
+                            </Link>
+                        )}
+                        <div className="glass-premium rounded-3xl p-1 border border-white/10 relative overflow-hidden flex flex-col flex-1">
+                            <div className="bg-black/60 rounded-[22px] p-6 h-full flex flex-col relative z-20 backdrop-blur-xl">
+                                <h3 className="text-xs font-mono uppercase tracking-widest text-zinc-500 mb-6 flex items-center gap-2">
+                                    <Activity className="w-3 h-3 text-white" />
+                                    System Diagnostics
+                                </h3>
 
-                                {/* Key Visualizer */}
-                                <div className="flex-1 min-h-[140px] bg-black/80 rounded-sm border border-white/10 p-4 relative overflow-hidden font-mono text-[10px] text-green-500/80 leading-tight select-none">
-                                    <div className="absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_1px,rgba(255,255,255,0.03)_1px,rgba(255,255,255,0.03)_2px)] pointer-events-none"></div>
-                                    {generatingKeys ? (
-                                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-10 backdrop-blur-sm">
-                                            <Loader2 className="w-8 h-8 text-white animate-spin mb-2" />
-                                            <span className="text-white animate-pulse tracking-widest">GENERATING_KEYS...</span>
-                                            <span className="text-xs text-zinc-500 mt-1">Calculating primes...</span>
+                                <div className="flex-1 space-y-6">
+                                    {/* Encryption Status */}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center text-xs text-zinc-500 font-mono">
+                                            <span>ENCRYPTION_PROTOCOL</span>
+                                            <span className={keysExist ? "text-emerald-400" : "text-amber-400"}>
+                                                {keysExist ? "ACTIVE" : "MISSING"}
+                                            </span>
                                         </div>
-                                    ) : (
-                                        <div className="opacity-70 break-all text-emerald-500">
-                                            {keysExist
-                                                ? "01001011 01000101 01011001 01011011 01010010 01000101 01000001 01000100 01011001 01011101 00101110 00101110 00101110 RSA-OAEP-256 SHA-256 MGF1 GENERATED SECURE STORAGE LOCKED"
-                                                : "WARNING: NO ENCRYPTION KEYS FOUND. COMM CHANNELS INSECURE. INITIALIZE IMMEDIATE."}
+                                        <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                            <div className={clsx("h-full rounded-full transition-all duration-1000 ease-out", keysExist ? "w-full bg-emerald-500 shadow-[0_0_10px_#22c55e]" : "w-[20%] bg-amber-500 animate-pulse")} />
                                         </div>
-                                    )}
-                                </div>
+                                    </div>
 
-                                <div className="mt-auto pt-4">
-                                    {!keysExist ? (
-                                        <Button
-                                            onClick={handleGenerateKeys}
-                                            disabled={generatingKeys}
-                                            className="w-full bg-white/10 text-white hover:bg-white/20 border border-white/50 backdrop-blur-sm group relative overflow-hidden"
-                                            size="sm"
-                                        >
-                                            <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-10 transition-opacity"></div>
-                                            {generatingKeys ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : <Shield className="w-4 h-4 mr-2 group-hover:scale-110 transition-transform" />}
-                                            <span className="font-mono tracking-wider">INITIALIZE_KEYS</span>
-                                        </Button>
-                                    ) : (
-                                        <div className="text-center">
-                                            <p className="text-[10px] text-emerald-500/70 font-mono mb-3">SECURE HANDSHAKE ESTABLISHED</p>
+                                    {/* Key Visualizer */}
+                                    <div className="flex-1 min-h-[140px] bg-black/80 rounded-sm border border-white/10 p-4 relative overflow-hidden font-mono text-[10px] text-green-500/80 leading-tight select-none">
+                                        <div className="absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_1px,rgba(255,255,255,0.03)_1px,rgba(255,255,255,0.03)_2px)] pointer-events-none"></div>
+                                        {generatingKeys ? (
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-10 backdrop-blur-sm">
+                                                <Loader2 className="w-8 h-8 text-white animate-spin mb-2" />
+                                                <span className="text-white animate-pulse tracking-widest">GENERATING_KEYS...</span>
+                                                <span className="text-xs text-zinc-500 mt-1">Calculating primes...</span>
+                                            </div>
+                                        ) : (
+                                            <div className="opacity-70 break-all text-emerald-500">
+                                                {keysExist
+                                                    ? "01001011 01000101 01011001 01011011 01010010 01000101 01000001 01000100 01011001 01011101 00101110 00101110 00101110 RSA-OAEP-256 SHA-256 MGF1 GENERATED SECURE STORAGE LOCKED"
+                                                    : "WARNING: NO ENCRYPTION KEYS FOUND. COMM CHANNELS INSECURE. INITIALIZE IMMEDIATE."}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="mt-auto pt-4">
+                                        {!keysExist ? (
                                             <Button
-                                                variant="ghost"
-                                                className="w-full text-zinc-500 hover:text-white border border-white/5 hover:border-white/20 text-xs font-mono"
-                                                onClick={() => {
-                                                    if (confirm("Regenerate keys? Previous messages will become unreadable.")) handleGenerateKeys();
-                                                }}
+                                                onClick={handleGenerateKeys}
+                                                disabled={generatingKeys}
+                                                className="w-full bg-white/10 text-white hover:bg-white/20 border border-white/50 backdrop-blur-sm group relative overflow-hidden"
+                                                size="sm"
                                             >
-                                                Rotate Keys (Destructive)
+                                                <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-10 transition-opacity"></div>
+                                                {generatingKeys ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : <Shield className="w-4 h-4 mr-2 group-hover:scale-110 transition-transform" />}
+                                                <span className="font-mono tracking-wider">INITIALIZE_KEYS</span>
                                             </Button>
-                                        </div>
-                                    )}
+                                        ) : (
+                                            <div className="text-center">
+                                                <p className="text-[10px] text-emerald-500/70 font-mono mb-3">SECURE HANDSHAKE ESTABLISHED</p>
+                                                <Button
+                                                    variant="ghost"
+                                                    className="w-full text-zinc-500 hover:text-white border border-white/5 hover:border-white/20 text-xs font-mono"
+                                                    onClick={() => {
+                                                        if (confirm("Regenerate keys? Previous messages will become unreadable.")) handleGenerateKeys();
+                                                    }}
+                                                >
+                                                    Rotate Keys (Destructive)
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         </div>

@@ -36,6 +36,10 @@ interface User {
   avatar: string;
   status: 'online' | 'offline' | 'busy';
   publicKey?: string; // Added for E2EE
+  role?: string;
+  dataUsage?: number;
+  minutesActive?: number;
+  clearanceLevel?: number;
 }
 
 interface Message {
@@ -71,6 +75,30 @@ export default function Home() {
   // Load E2EE Keys
   useEffect(() => {
     loadKeyPair().then(setKeyPair);
+  }, []);
+
+  // Heartbeat for Active Time Tracking
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    const heartbeat = async () => {
+      try {
+        await fetch('/api/user/heartbeat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ duration: 1 }) // 1 minute
+        });
+      } catch (e) {
+        console.error("Heartbeat failed", e);
+      }
+    };
+
+    const interval = setInterval(heartbeat, 60000); // Every minute
+    return () => clearInterval(interval);
   }, []);
 
   // Chat State
@@ -315,6 +343,20 @@ export default function Home() {
             return [...prev, data.message];
           });
           setNewMessage("");
+
+          // Track Data Usage (Fire and forget)
+          const payloadSize = new Blob([finalContent]).size;
+          const token = localStorage.getItem('token');
+          if (token) {
+            fetch('/api/user/heartbeat', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({ data: payloadSize })
+            }).catch(() => { });
+          }
         }
       }
     } catch (error) {
@@ -618,10 +660,20 @@ export default function Home() {
                       <h2 className="font-bold text-base leading-tight flex items-center gap-2 text-white tracking-wide font-mono">
                         {otherParticipant.name}
                       </h2>
-                      <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold flex items-center gap-2">
-                        <span className={clsx("w-1.5 h-1.5 rounded-full", otherParticipant.status === 'online' ? "bg-emerald-500" : "bg-zinc-600")}></span>
-                        SIG_ID: {otherParticipant.uniqueId}
-                      </span>
+                      <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider font-semibold">
+                        <span className="flex items-center gap-1.5 text-zinc-500">
+                          <span className={clsx("w-1.5 h-1.5 rounded-full", otherParticipant.status === 'online' ? "bg-emerald-500" : "bg-zinc-600")}></span>
+                          SIG_ID: {otherParticipant.uniqueId}
+                        </span>
+                        <span className={clsx(
+                          "px-1.5 py-0.5 rounded border font-mono",
+                          (otherParticipant.clearanceLevel || 1) === 5
+                            ? "bg-purple-500/10 text-purple-400 border-purple-500/20 shadow-[0_0_8px_rgba(168,85,247,0.3)]"
+                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                        )}>
+                          LVL-{otherParticipant.clearanceLevel || 1}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );

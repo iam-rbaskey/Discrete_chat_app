@@ -32,7 +32,7 @@ export async function GET(req: Request) {
         // Search for user by uniqueId (exact match preferred) or name (partial match)
         const users = await User.find({
             $and: searchConditions
-        }).select('name uniqueId avatar status gender country');
+        }).select('name uniqueId avatar status gender country clearanceLevel');
 
         return NextResponse.json({ users });
     } catch (error: any) {

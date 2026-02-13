@@ -28,7 +28,7 @@ export async function POST(req: Request) {
         }
 
         const token = jwt.sign(
-            { userId: user._id, uniqueId: user.uniqueId, name: user.name },
+            { userId: user._id, uniqueId: user.uniqueId, name: user.name, role: user.role || 'user' },
             JWT_SECRET,
             { expiresIn: '7d' }
         );
@@ -41,7 +41,8 @@ export async function POST(req: Request) {
                 name: user.name,
                 uniqueId: user.uniqueId,
                 avatar: user.avatar,
-                status: user.status
+                status: (user as any).status,
+                role: (user as any).role || 'user'
             }
         });
 

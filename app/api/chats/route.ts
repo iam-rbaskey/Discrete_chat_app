@@ -46,7 +46,7 @@ export async function POST(req: Request) {
 
         // Populate participants for frontend
         const populatedChat = await Chat.findById(newChat._id)
-            .populate('participants', 'name avatar uniqueId status gender country publicKey');
+            .populate('participants', 'name avatar uniqueId status gender country publicKey clearanceLevel');
 
         return NextResponse.json({ chat: populatedChat, isNew: true });
     } catch (error: any) {
@@ -71,7 +71,7 @@ export async function GET(req: Request) {
         const chats = await Chat.find({
             participants: userId
         })
-            .populate('participants', 'name avatar uniqueId status gender country publicKey')
+            .populate('participants', 'name avatar uniqueId status gender country publicKey clearanceLevel')
             .sort({ updatedAt: -1 });
 
         return NextResponse.json({ chats });

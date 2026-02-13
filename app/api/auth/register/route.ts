@@ -44,7 +44,7 @@ export async function POST(req: Request) {
             gender,
             country,
             avatar: '', // No profile picture as requested
-            status: 'online'
+            role: 'user'
         });
 
         return NextResponse.json({
