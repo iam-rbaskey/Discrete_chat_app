@@ -74,6 +74,7 @@ export default function Home() {
   const [showDetails, setShowDetails] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [keyPair, setKeyPair] = useState<CryptoKeyPair | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load E2EE Keys
   // Load or Generate E2EE Keys
@@ -335,8 +336,9 @@ export default function Home() {
 
 
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !activeChatId || !user) return;
+  const handleSendMessage = async (eOrContent?: any) => {
+    const contentToSend = typeof eOrContent === 'string' ? eOrContent : newMessage;
+    if (!contentToSend.trim() || !activeChatId || !user) return;
 
     let finalContent = "";
 
@@ -350,9 +352,9 @@ export default function Home() {
 
         // Encrypt for BOTH Recipient and Sender (Self)
         if (keyPair?.publicKey) {
-          finalContent = await encryptMessageForUser(newMessage, recipientKey, keyPair.publicKey);
+          finalContent = await encryptMessageForUser(contentToSend, recipientKey, keyPair.publicKey);
         } else {
-          finalContent = await encryptMessageForUser(newMessage, recipientKey);
+          finalContent = await encryptMessageForUser(contentToSend, recipientKey);
         }
         console.log("E2EE Encrypted (Dual-Lock)");
       }
@@ -362,7 +364,7 @@ export default function Home() {
 
     // 2. Fallback to Legacy Encryption if E2EE failed or not possible
     if (!finalContent) {
-      finalContent = encryptLegacy(newMessage);
+      finalContent = encryptLegacy(contentToSend);
       console.log("Legacy Encrypted");
     }
 
@@ -385,7 +387,8 @@ export default function Home() {
             if (prev.some(m => m._id === data.message._id)) return prev;
             return [...prev, data.message];
           });
-          setNewMessage("");
+
+          if (typeof eOrContent !== 'string') setNewMessage("");
 
           // Track Data Usage (Fire and forget)
           const payloadSize = new Blob([finalContent]).size;
@@ -405,6 +408,42 @@ export default function Home() {
     } catch (error) {
       console.error("Failed to send message", error);
     }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate size (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File size exceeds 10MB limit.");
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // Validate type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    if (!allowedTypes.includes(file.type)) {
+      alert("Invalid file type. Only Images, PDF, and Docs allowed.");
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64Data = reader.result as string;
+      const payload = JSON.stringify({
+        type: 'file',
+        name: file.name,
+        mime: file.type,
+        data: base64Data
+      });
+
+      await handleSendMessage(payload);
+    };
+    reader.readAsDataURL(file);
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const startChat = async (selectedUser: User) => {
@@ -900,7 +939,19 @@ export default function Home() {
                       style={{ minHeight: '44px' }}
                     />
 
-                    <Button variant="ghost" size="icon" className="text-zinc-500 hover:text-white hover:bg-transparent transition-colors">
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      className="hidden"
+                      onChange={handleFileSelect}
+                      accept=".jpg,.jpeg,.png,.pdf,.doc,.docx"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-zinc-500 hover:text-white hover:bg-transparent transition-colors"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
                       <Paperclip className="w-5 h-5" />
                     </Button>
                   </div>
